@@ -174,6 +174,9 @@ where
 pub trait KernelMessage: CppGetRawMessage + CppGetRawMessageMut + OwnedMessageInterop {}
 impl<T: CppGetRawMessage + CppGetRawMessageMut + OwnedMessageInterop> KernelMessage for T {}
 
+pub trait KernelWithReflection: MessageDescriptorInterop {}
+impl<T: MessageDescriptorInterop> KernelWithReflection for T {}
+
 pub trait KernelMessageView<'msg>:
     CppGetRawMessage + MessageViewInterop<'msg> + AsView + From<MessageViewInner<'msg, Self::KMessage>>
 {

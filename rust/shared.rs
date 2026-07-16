@@ -22,7 +22,7 @@ pub use crate::codegen_traits::{
     create::Parse,
     read::Serialize,
     write::{Clear, ClearAndParse, CopyFrom, MergeFrom, TakeFrom},
-    Message, MessageMut, MessageType, MessageView,
+    Message, MessageMut, MessageType, MessageView, WithReflection,
 };
 pub use crate::cord::{ProtoBytesCow, ProtoStringCow};
 pub use crate::extension::ExtensionId;

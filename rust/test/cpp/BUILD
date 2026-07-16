@@ -56,3 +56,12 @@ rust_test(
         "@crate_index//:googletest",
     ],
 )
+
+rust_test(
+    name = "reflection_bounds_test",
+    srcs = ["reflection_bounds_test.rs"],
+    edition = "2024",
+    deps = [
+        "//rust:protobuf_cpp_export",
+    ],
+)
