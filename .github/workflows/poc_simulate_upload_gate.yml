@@ -1,0 +1,58 @@
+name: Reproduce protobuf-ci upload-gate bug (SAFE — no Google resources)
+
+# Run this on YOUR fork only. It does not touch protocolbuffers secrets or GCS.
+# Purpose: show the flag construction bug with event_name=pull_request_target.
+
+on:
+  workflow_dispatch:
+    inputs:
+      simulate_event:
+        description: "Event name to simulate"
+        required: true
+        default: pull_request_target
+        type: choice
+        options:
+          - pull_request_target
+          - pull_request
+          - push
+
+permissions:
+  contents: read
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Simulate protobuf-ci bazel-setup flags
+        env:
+          EVENT: ${{ inputs.simulate_event }}
+        run: |
+          set -euo pipefail
+          BAZEL_FLAGS="--keep_going --test_output=errors --test_timeout=600"
+          BAZEL_FLAGS="$BAZEL_FLAGS --google_credentials=/tmp/fake.json"
+          BAZEL_FLAGS="$BAZEL_FLAGS --remote_cache=https://storage.googleapis.com/protobuf-bazel-cache/protobuf/gha/poc"
+
+          # Exact condition from protobuf-ci internal/bazel-setup/action.yml
+          if [[ "$EVENT" != "pull_request_target" ]]; then
+            BAZEL_FLAGS="$BAZEL_FLAGS --remote_upload_local_results"
+          fi
+
+          echo "simulated_event=$EVENT"
+          echo "BAZEL_FLAGS=$BAZEL_FLAGS"
+
+          if [[ "$EVENT" == "pull_request_target" ]]; then
+            if echo "$BAZEL_FLAGS" | grep -Eq 'remote_upload_local_results=false|noremote_upload_local_results'; then
+              echo "UNEXPECTED: uploads disabled"
+              exit 1
+            fi
+            echo "RESULT: pull_request_target leaves upload flag unset"
+            echo "Bazel default remote_upload_local_results=true → WRITES ENABLED"
+          fi
+
+      - name: Cite Bazel default from upstream source
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/bazelbuild/bazel/master/src/main/java/com/google/devtools/build/lib/remote/options/RemoteOptions.java \
+            | grep -A6 'name = "remote_upload_local_results"' | head -20
