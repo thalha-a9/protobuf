@@ -2,11 +2,13 @@
 
 **Program:** Google Open Source Software Vulnerability Reward Program (OSS VRP)  
 **Category:** Supply chain compromise — build integrity / distributed artifact integrity  
+**Severity:** Critical  
+**Project tier:** **OT0 (Flagship)** — `https://github.com/protocolbuffers/protobuf` is listed as `TIER_OT0` in [google/bughunters `oss-repository-tier/external_repositories.txtpb`](https://github.com/google/bughunters/blob/main/oss-repository-tier/external_repositories.txtpb). OT0 supply-chain rewards: **$3,133.7 – $31,337** per OSS VRP rules.  
 **Target repositories:**
-- `protocolbuffers/protobuf` (consumer of CI)
+- `protocolbuffers/protobuf` (OT0 consumer of CI; primary impact surface for distributed artifacts)
 - `protocolbuffers/protobuf-ci` (vulnerable composite actions; floating tag `v5`)
 
-**Reporter classification:** Critical — shared remote cache write from attacker-controlled workflow code, overlapping release build cache namespaces, contradicting project’s own security model.
+**Reporter classification:** **Critical** — shared remote cache write from attacker-controlled workflow code, overlapping release build cache namespaces, contradicting the project’s own security model. Aligns with the Critical rows in §5 (build integrity, release binary integrity, ecosystem supply chain).
 
 ---
 
@@ -26,7 +28,9 @@ The implementation in `protocolbuffers/protobuf-ci@v5` **does not enforce that m
 
 Additionally, every labeled fork PR runs the **`linux-release` / `x86_64`** job with sccache prefix `linux-release-x86_64` — the same prefix used by release-oriented CMake CI — so poisoned objects sit directly on the release compilation path.
 
-**Approval bypass (VRP requirement):** The fork path is gated by the `:a: safe for tests` label. This report includes a **TOCTOU** attack scenario against that gate (explicitly listed as acceptable in OSS VRP rules). Without TOCTOU, the same bug is still an **insider-risk / post-stamp cache write** failure of a security boundary the project claims to enforce.
+**Positive control (same codebase):** `protobuf-ci/composer-setup/action.yml` already implements the correct fork pattern (`actions/cache` for trusted events vs `actions/cache/restore` for `pull_request_target`). `ccache/action.yml` does not. That makes the ccache gap a **regression against an established internal pattern**, not plausible “intended behavior.” Details: §3.4; evidence: `evidence/pinned-actions/composer-setup.action.yml` vs `ccache.action.yml`.
+
+**Approval bypass (VRP requirement):** The fork path is gated by the `:a: safe for tests` label. This report includes a **TOCTOU** attack against that gate (explicitly listed as acceptable in OSS VRP rules). Without TOCTOU, the same bug is still an **insider-risk / post-stamp cache write** failure of a security boundary the project claims to enforce.
 
 ---
 
@@ -34,9 +38,11 @@ Additionally, every labeled fork PR runs the **`linux-release` / `x86_64`** job 
 
 | Component | Version / pin |
 |-----------|----------------|
+| OSS VRP tier | **OT0 (Flagship)** — confirmed in google/bughunters `external_repositories.txtpb` |
 | `protocolbuffers/protobuf` | `main` @ `7c02abb54a316986679e909ed0c044139133a77c` (audited); any revision using `protobuf-ci@v5` + `test_runner.yml` `pull_request_target` flow |
 | `protocolbuffers/protobuf-ci` | Floating tag **`v5`** → `e6f43bbf992213fb28a21fab10368dfd9dd3cb13` (`v5.0.3`) |
 | Vulnerable files | `internal/bazel-setup/action.yml`, `sccache/action.yml`, `ccache/action.yml` |
+| Positive-control comparison | `composer-setup/action.yml` (correct fork cache split) |
 | Bazel behavior | `--remote_upload_local_results` **defaultValue = "true"** (Bazel `RemoteOptions.java`, current master and recent releases) |
 | Consumer workflows | `protobuf/.github/workflows/test_runner.yml`, `test_cpp.yml` (`linux-release`), language `test_*.yml` passing `secrets.GAR_SERVICE_ACCOUNT` |
 
@@ -123,9 +129,9 @@ cache-prefix: linux-release-${{ matrix.arch }}
 
 So **`linux-release-x86_64` sccache is writable from a labeled fork PR**, then reused by privileged continuous/post-submit release builds.
 
-### 3.4 ccache — regression against an established internal pattern
+### 3.4 ccache — regression against an established internal pattern (positive control)
 
-The **correct** fork-hardening pattern already exists in the same `protobuf-ci` repository. `composer-setup/action.yml` correctly splits trusted save vs untrusted restore-only:
+**Positive control in the same repository:** The correct fork-hardening pattern already exists in `protobuf-ci`. `composer-setup/action.yml` correctly splits trusted save vs untrusted restore-only. The ccache action does **not** follow this pattern, making the omission **inconsistent rather than intentional** — a security regression against an established internal control, not a design choice to let forks write.
 
 ```yaml
 # Trusted path — can upload to the Actions cache
@@ -195,6 +201,8 @@ and later checks out that SHA with `GAR_SERVICE_ACCOUNT` inherited into reusable
 4. Maintainer clicks the safety label (check = “this PR is safe”) while HEAD is already `BAD`, or in the race window where the label webhook samples `head.sha = BAD` after a last-second force-push.
 5. CI pins `BAD`, not the reviewed tree — **the human check and the automated use diverge**.
 
+This constitutes a **TOCTOU bypass as defined in OSS VRP rules** — the time-of-check is the human review of commit `GOOD`, the time-of-use is CI execution against commit `BAD` after a force-push in the review window. That demonstrates exploitability **bypassing** the requirement that external contributors must first have PRs approved (the approval/stamp does not bind to the reviewed tree).
+
 This matches the VRP language: exploitability without relying on a *correct* maintainer approval of the malicious tree; the gate is TOCTOU’d.
 
 > Note: SHA pinning closes *post-webhook* force-push mutation, but does **not** close review-vs-label TOCTOU (TOC = human review of GOOD, TOU = label event / CI of BAD).
@@ -238,12 +246,14 @@ With the SA JSON, a malicious step can call GCS/GAR APIs directly. That bypasses
 
 ## 5. Impact
 
+**Tier framing:** Because `protocolbuffers/protobuf` is **OT0**, a qualifying supply-chain compromise is assessed under the Flagship reward band (**$3,133.7 – $31,337**). Impact below is scored on integrity of builds and downstream artifacts, not on product memory-corruption criteria.
+
 | Impact | Severity |
 |--------|----------|
-| Write access to shared Bazel remote cache from attacker-controlled CI code | Critical (build integrity) |
-| Write access to shared sccache used by `linux-release-*` jobs | Critical (release binary integrity) |
-| Potential compromise of distributed protoc / language runtimes / BCR archives | Critical (ecosystem supply chain) |
-| Breaks documented fork isolation model | High (security boundary failure) |
+| Write access to shared Bazel remote cache from attacker-controlled CI code | **Critical** (build integrity) |
+| Write access to shared sccache used by `linux-release-*` jobs | **Critical** (release binary integrity) |
+| Potential compromise of distributed protoc / language runtimes / BCR archives | **Critical** (ecosystem supply chain) |
+| Breaks documented fork isolation model; regresses vs `composer-setup` pattern | High (security boundary failure) |
 | Floating `protobuf-ci@v5` spreads the bug to every consumer of the composite actions | High |
 
 **Confidentiality:** SA token/JSON exposure to untrusted PR code (cloud resource access beyond CI).  
