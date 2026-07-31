@@ -22,7 +22,7 @@ The implementation in `protocolbuffers/protobuf-ci@v5` **does not enforce that m
 |--------|-------------------|-------------|
 | Bazel remote cache (`protobuf-bazel-cache`) | No uploads from forks | Never sets `--remote_upload_local_results=false` on `pull_request_target`; Bazel default is **`true`** |
 | sccache (`protobuf-sccache`) | No writes from forks | Read-only guard **commented out**; always `SCCACHE_GCS_RW_MODE=READ_WRITE` |
-| ccache (GitHub Actions cache) | Careful fork hardening elsewhere | Uses full `actions/cache` (save) on `pull_request_target` (base-branch cache scope) |
+| ccache (GitHub Actions cache) | Careful fork hardening elsewhere | Uses full `actions/cache` (save) on `pull_request_target`; **does not** follow the `composer-setup` trusted-save / fork-restore-only pattern already in the same repo |
 
 Additionally, every labeled fork PR runs the **`linux-release` / `x86_64`** job with sccache prefix `linux-release-x86_64` — the same prefix used by release-oriented CMake CI — so poisoned objects sit directly on the release compilation path.
 
@@ -123,7 +123,39 @@ cache-prefix: linux-release-${{ matrix.arch }}
 
 So **`linux-release-x86_64` sccache is writable from a labeled fork PR**, then reused by privileged continuous/post-submit release builds.
 
-### 3.4 Policy contradiction (project’s own docs)
+### 3.4 ccache — regression against an established internal pattern
+
+The **correct** fork-hardening pattern already exists in the same `protobuf-ci` repository. `composer-setup/action.yml` correctly splits trusted save vs untrusted restore-only:
+
+```yaml
+# Trusted path — can upload to the Actions cache
+- name: Cache Composer dependencies
+  if: ${{ github.event_name != 'pull_request_target' }}
+  uses: actions/cache@...
+
+# Untrusted path — restore only, never upload
+- name: Restore Composer dependencies from cache
+  if: ${{ github.event_name == 'pull_request_target' }}
+  uses: actions/cache/restore@...
+```
+
+The same repository’s `ccache/action.yml` does **not** follow this pattern. It always uses full `actions/cache` (save + restore) with **no** `pull_request_target` guard:
+
+```yaml
+- name: Setup fixed path ccache caching
+  uses: actions/cache@...   # not actions/cache/restore
+  with:
+    key: ${{ format('ccache-{0}-{1}-{2}', inputs.cache-prefix, github.ref_name, github.sha) }}
+    restore-keys: |
+      ${{ format('ccache-{0}-{1}', inputs.cache-prefix, github.ref_name) }}
+      ${{ format('ccache-{0}-{1}', inputs.cache-prefix, github.base_ref) }}
+```
+
+On `pull_request_target`, `github.ref_name` / `github.sha` resolve in the **base branch** context, so a successful cache save lands in the base-branch Actions cache namespace visible to later `main` workflows.
+
+This is not an ambiguous one-off misconfiguration: the org already encoded the safe pattern in `composer-setup` (and similarly uses restore-only for Bazelisk on PR events). The ccache omission is a **security regression against an established internal pattern**, which makes intentional “we meant forks to write here” an unlikely reading.
+
+### 3.5 Policy contradiction (project’s own docs)
 
 `protobuf/.github/workflows/README.md`:
 
@@ -131,7 +163,7 @@ So **`linux-release-x86_64` sccache is writable from a labeled fork PR**, then r
 - sccache: “disallow writing in PRs from forks.”
 - Forks after approval: “read-only access to our caches and Docker images, but will generally disallow any writes to shared resources.”
 
-Implementation violates all three statements.
+Implementation violates all three statements. The ccache gap (§3.4) further shows the failure is inconsistent with controls the same `protobuf-ci` repo already applies elsewhere.
 
 ---
 
