@@ -236,8 +236,27 @@ Expected: `pull_request_target` → upload policy **NOT disabled**; sccache **RE
 
 ### 6.2 GitHub Actions simulation (on reporter’s fork only)
 
-Copy `poc/gha_simulate_upload_gate.yml` into a personal repo under `.github/workflows/`, run `workflow_dispatch` with `simulate_event=pull_request_target`.  
-Job logs show unset upload flag + Bazel source citation `defaultValue = "true"`.
+Workflow: `.github/workflows/poc_simulate_upload_gate.yml` on the reporter fork  
+`thalha-a9/protobuf` (branch `main`). Dispatch with `simulate_event=pull_request_target`.
+
+**Successful run (logs-only, no Google secrets/GCS):**  
+https://github.com/thalha-a9/protobuf/actions/runs/30649223338
+
+Observed log lines:
+
+```
+simulated_event=pull_request_target
+BAZEL_FLAGS=--keep_going --test_output=errors --test_timeout=600 --google_credentials=/tmp/fake.json --remote_cache=https://storage.googleapis.com/protobuf-bazel-cache/protobuf/gha/poc
+RESULT: pull_request_target leaves upload flag unset
+Bazel default remote_upload_local_results=true → WRITES ENABLED
+```
+
+And from Bazel upstream source fetched in the same job:
+
+```
+name = "remote_upload_local_results",
+defaultValue = "true",
+```
 
 ### 6.3 End-to-end against protobuf CI (logs-only)
 
